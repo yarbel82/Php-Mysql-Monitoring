@@ -1,0 +1,126 @@
+version: "3"
+
+services:
+
+    PHP:
+      #image: wordpress:php7.3-fpm
+      image: wordpress
+      restart: always
+      #init for php-fpm
+        #command: sh -c 'chmod +x /init.sh && /init.sh && php-fpm'
+      ports:
+        - 8081:80
+      depends_on:
+        - mysql
+      networks:
+        - backend
+        - frontend
+      environment:
+        WORDPRESS_DB_HOST: mysql:3306
+        WORDPRESS_DB_USER: ${MYSQL_USER}
+        WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+        WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+      volumes:
+        #- html:/var/www/html
+        - ./www:/var/www/html
+        #- vendor:/var/www/vendor
+      logging:
+         driver: "json-file"
+         options:
+           max-size: "50m"
+           max-file: "3"
+
+
+
+    mysql:
+      image: mariadb:10.3
+      #image: mysql:5.7
+      restart: "always"
+      #Init mysql
+      command: bash -c "exec /docker-entrypoint.sh mysqld --log-error=/var/log/mysql/err.log --character-set-server=utf8 --collation-server=utf8_general_ci"
+      #command: bash -c "chown -R mysql:mysql /var/log/mysql && exec /docker-entrypoint.sh mysqld --log-error=/var/log/mysql/err.log --character-set-server=utf8 --collation-server=utf8_general_ci"
+      volumes:
+       #- /etc/timezone:/etc/timezone:ro
+       #- /etc/localtime:/etc/localtime:ro
+       - mariadb:/var/lib/mysql
+       - log:/var/log/mysql
+       - ./db/dump.sql:/docker-entrypoint-initdb.d/dump.sql
+       # For Mysql:8.
+       #- ./db:/var/lib/mysql
+      networks:
+        - backend
+        - monitoring
+      ports:
+        - "3306:3306"
+      environment:
+        MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+        MYSQL_DATABASE: ${MYSQL_DATABASE}
+        MYSQL_USER: ${MYSQL_USER}
+        MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+        #MYSQL_RANDOM_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      logging:
+        driver: "json-file"
+        options:
+          max-size: "500m"
+          max-file: "10"
+
+    # grafana used for graphing mysql data
+    grafana:
+      image: grafana/grafana
+      user: "root"
+      #command: chmod 755 ./grafana/setup.sh
+      environment:
+        GF_INSTALL_PLUGINS: percona-percona-app
+      volumes:
+      #- ./config/grafana.ini:/etc/grafana/grafana.ini
+      - ./data/:/var/lib/grafana/
+      - ./logs/:/var/log/grafana/
+      - ./provisioning/:/etc/grafana/provisioning/
+      - ./plugins/:/var/lib/grafana/plugins/
+      ports:
+        - "3000:3000"
+      networks:
+        - monitoring
+
+
+    # tool to connect to mysql instance, and allow prometheus to collect mysql stats
+    prom_mysql_exporter:
+      image: prom/mysqld-exporter
+      links:
+        - mysql
+      ports:
+        - '9104:9104'
+      environment:
+        DATA_SOURCE_NAME: root:${MYSQL_ROOT_PASSWORD}@(mysql:3306)/db
+      #command: /bin/mysqld_exporter collect.binlog_size=true collect.info_schema.processlist=true
+      networks:
+        - monitoring
+
+
+    # prometheus stores and handles timeseries data for statistics around mysql   
+    prometheus:
+      image: prom/prometheus
+      links:
+        - prom_mysql_exporter
+      ports:
+        - "9090:9090"
+      volumes:
+        -  ./prometheus:/etc/prometheus
+      networks:
+        - monitoring
+
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: false
+  monitoring:
+
+
+
+volumes:
+  mariadb:
+  vendor:
+  html:
+  log:
